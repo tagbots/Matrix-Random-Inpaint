@@ -1,10 +1,9 @@
-% Utility: matrix_noise(alg_list, img, snr, delta)
+% Utility: inpaint_xmask(alg_list, img, snr, delta)
 %
 % Input:
 %   1) alg_list: "call names for my four algos"
 %   2) img: test image
-%   3) snr: signal-to-noise ratio (SNR)
-%   4) delta: undersampling ratio
+%   3) delta: percentage of known entries (see undersampling ratio formula)
 %
 % Output:
 %   1) image_results: results from each algorithm
@@ -12,7 +11,7 @@
 %   3) inpaintOut: result from inpainting step
 %   4) inpaint_psnr: peak SNR of inpainted image
 
-function [image_results, M, inpaintOut, inpaint_psnr] = matrix_noise_v2(alg_list, img, snr, delta) %= random_inpaint(alg_name, img, snr) prior file
+function [image_results, M, inpaintOut, inpaint_psnr, snr] = inpaint_xmask_v2(alg_list, img, delta)
 
 % ======== read and normalize greyscale data
 
@@ -31,13 +30,11 @@ M = U*S*V';
 
 [m, n] = size(M);
 
-% 1) rng(1) enables a reproducible experiment, so you can see whether the
-% car works...
-
-
 % ======== generate the observation space Omega
 
-% p = round(delta*m*n);
+rng(1)
+
+p = round(delta*m*n);
 % Omega = randperm(sOmega, m*n, p)';
 
 if delta == 1
@@ -45,7 +42,7 @@ if delta == 1
 else
    A = zeros(m*n,1);
    A(1:p) = ones(p,1);
-   [~,ind] = sort(randn(sOmega,m*n,1));
+   [~,ind] = sort(randn(m*n,1));
    A = A(ind);
    A = reshape(A,m,n);
 
@@ -53,38 +50,59 @@ else
    Omega = sub2ind([m n], I, J);
 end
 
+
 % ======== restrict image approximation to observed entries
 
 data = M(Omega);
 
-% ======== generate random matrix restricted to observed entries
+% ======== calculate realized SNR induced by missing observations
 
-NN = randn(sNoise, size(M));
-NN = NN(Omega);
+snr = 20*log10(norm(data)/norm(data - M(Omega)));
 
-% ======== image inpainting
+% ======== load mask
 
-noiseLevel = norm(data) / (10^(snr/20)*norm(NN));
-data = data + noiseLevel*NN;
+maskFile = load('xmask.mat', 'A');
+cross = maskFile.A;
 
-% ======== visualize and calculate PSNR of inpainted image
+% ======== image inpainting and generate observed mask
+
+maskValue = 1; % ------- adjust mask pixel value
+
+% -------- option one: cross mask with random observations
+
+dirtyX = logical(cross(Omega));
 
 inpaintOut = zeros(size(M));
-inpaintOut(Omega) = data;
+inpaintOut(Omega(~dirtyX)) = maskValue;
+inpaintOut(Omega(dirtyX)) = data(dirtyX);
+
+data(~dirtyX) = 0;
+
+% -------- option two: random observations with random mask
+
+% cleanX = logical(~cross);
+% 
+% inpaintOut = zeros(size(M));
+% inpaintOut(Omega) = data;
+% inpaintOut(cleanX) = maskValue;
+% 
+% data(cleanX(Omega)) = 0;
+
+% ======== calculate realized SNR and PSNR of inpainted image
 
 inpaint_psnr = psnr(inpaintOut, M, 1);
 
 % ======== test algorithms on inpainted image
 
-image_results = cell(4, 1);
+fprintf('recovery starts...\n')
+
+image_results = cell(size(alg_list));
 
 opts = default_opts;
 disp('Options used:')
 disp(opts)
 
-fprintf('recovery starts...\n\n')
-
-for k = 1:4
+for k = 1:numel(alg_list)
 
     alg_name = alg_list{k};
     fhandle = str2func(alg_name);
@@ -111,4 +129,4 @@ end
 
 fprintf('recovery ends...\n\n')
 
-end
+close all
